@@ -1,9 +1,13 @@
 # Comparador de Contratos com IA
 
-Aplicacao web para comparacao inteligente de contratos (PDF/DOCX) usando
+Aplicacao para comparacao inteligente de contratos (PDF/DOCX) usando
 processamento deterministico + Modelos de Linguagem (LLM). Gera um relatorio
 juridico profissional em Markdown e PDF com analise das diferencas entre duas
 versoes de um mesmo contrato.
+
+A arquitetura e **desacoplada**: um **backend API REST** (FastAPI) expoe o
+servico de comparacao, e um **frontend** (Streamlit) consome a API. Isso permite
+substituir a interface no futuro (React, Vue, CLI, mobile) sem tocar no backend.
 
 ---
 
@@ -15,11 +19,8 @@ versoes de um mesmo contrato.
 - [Pre-requisitos](#pre-requisitos)
 - [Instalacao](#instalacao)
 - [Configuracao do LLM](#configuracao-do-llm)
-  - [LiteLLM Proxy + Ollama (local)](#1-litellm-proxy--ollama-local)
-  - [OpenRouter](#2-openrouter)
-  - [Groq](#3-groq)
-  - [OpenAI Oficial](#4-openai-oficial)
 - [Como usar](#como-usar)
+- [API REST](#api-rest)
 - [Estrutura de arquivos](#estrutura-de-arquivos)
 - [Variaveis de ambiente](#variaveis-de-ambiente)
 - [Regra de negocio detalhada](#regra-de-negocio-detalhada)
@@ -31,8 +32,8 @@ versoes de um mesmo contrato.
 
 O **Comparador de Contratos** automatiza a analise de revisoes contratuais.
 Em vez de ler dois documentos manualmente pagina por pagina, o usuario faz o
-upload da versao original (Contrato A) e da versao revisada (Contrato B). A
-aplicacao entao:
+upload da versao original (Contrato A) e da versao revisada (Contrato B). O
+sistema entao:
 
 1. **Extrai o texto** de ambos os documentos (PDF ou DOCX)
 2. **Compara estruturalmente** os textos usando algoritmo deterministico
@@ -55,19 +56,50 @@ aplicacao entao:
 
 ## Arquitetura
 
-O pipeline e orquestrado pelo **LangGraph** em 3 etapas sequenciais:
+A aplicacao e dividida em **duas camadas independentes** que se comunicam via
+HTTP:
+
+```
++-------------------------------------------------------+
+|                       USUARIO                         |
++-------------------------------------------------------+
+                          |
+                          v
++-------------------------------------------------------+
+|  FRONTEND  (Streamlit)                                |
+|  app.py + api_client.py                               |
+|  - Upload de arquivos                                 |
+|  - Chamada POST /api/v1/contracts/compare             |
+|  - Exibicao do relatorio                              |
+|  - Download do PDF                                    |
++-------------------------------------------------------+
+                          |
+                          | HTTP multipart/form-data
+                          v
++-------------------------------------------------------+
+|  BACKEND  (FastAPI + LangGraph)                       |
+|  /api/v1/contracts/compare                            |
+|  - Extrai texto (PDF/DOCX)                            |
+|  - Compara (difflib)                                  |
+|  - Gera relatorio (LLM)                               |
+|  - Converte para PDF (WeasyPrint)                     |
+|  - Retorna JSON {markdown, pdf_base64, differences}   |
++-------------------------------------------------------+
+```
+
+### Pipeline interno do backend (LangGraph)
 
 ```
 +-------------+     +------------------+     +------------------+
-|   Upload    | --> |  Extração        | --> |  Comparação      |
-|  (Streamlit)|     |  (PDF/DOCX)      |     |  (difflib)       |
+|   Upload    | --> |  Extracao        | --> |  Comparacao      |
+|  (FastAPI)  |     |  (PDF/DOCX)      |     |  (difflib)       |
 +-------------+     +------------------+     +------------------+
                                                       |
-                      +------------------+            v
-                      |  Relatorio PDF   | <-- +------------------+
-                      |  (WeasyPrint)    |     |  Geracao de      |
-                      +------------------+     |  Relatorio (LLM) |
-                                               +------------------+
+                       +------------------+           v
+                       |  Relatorio PDF   | <-- +------------------+
+                       |  (WeasyPrint)    |     |  Geracao de      |
+                       +------------------+     |  Relatorio (LLM) |
+                                                +------------------+
 ```
 
 1. **Extracao** (`extractors.py`): le PDF via `pypdf` ou DOCX via
@@ -76,20 +108,15 @@ O pipeline e orquestrado pelo **LangGraph** em 3 etapas sequenciais:
 
 2. **Comparacao** (`comparator.py`): divide os textos em blocos
    (paragrafos/clausulas) e usa `difflib.SequenceMatcher` para detectar
-   adicoes, remocoes e modificacoes. Classifica cada diferenca em:
-   - `added`    — clausula nova no Contrato B
-   - `removed`  — clausula removida do Contrato A
-   - `modified` — clausula alterada
+   adicoes, remocoes e modificacoes.
 
-3. **Geracao de relatorio** (`graph.py` / `report_template.py`): as
+3. **Geracao de relatorio** (`contract_graph.py` / `report_template.py`): as
    diferencas sao formatadas em um prompt estruturado e enviadas a um LLM
-   via API OpenAI-compatible. O LLM produz um relatorio com 5 secoes:
-   Resumo Executivo, Adicionadas, Removidas, Modificadas e Pontos de
-   Atencao/Riscos.
+   via API OpenAI-compatible. O LLM produz um relatorio com 5 secoes.
 
 4. **Exportacao PDF** (`pdf_exporter.py`): converte o Markdown do LLM para
    HTML (via `markdown`) e renderiza em PDF (via `weasyprint`) com CSS
-   profissional — incluindo tabelas, cabecalho, rodape e tipografia.
+   profissional.
 
 ---
 
@@ -97,14 +124,18 @@ O pipeline e orquestrado pelo **LangGraph** em 3 etapas sequenciais:
 
 | Camada | Tecnologia |
 |--------|-----------|
-| Interface Web | [Streamlit](https://streamlit.io) |
+| Backend API | [FastAPI](https://fastapi.tiangolo.com) |
+| Servidor ASGI | [Uvicorn](https://www.uvicorn.org) |
 | Orquestracao | [LangGraph](https://langchain-ai.github.io/langgraph/) |
 | LLM (conexao) | Cliente nativo `openai` (OpenAI-compatible) |
+| Interface Web | [Streamlit](https://streamlit.io) |
+| HTTP Client | `requests` (frontend -> backend) |
 | Extracao PDF | [pypdf](https://pypdf.readthedocs.io) |
 | Extracao DOCX | [python-docx](https://python-docx.readthedocs.io) |
 | Comparacao | `difflib` (stdlib Python) |
 | Markdown -> HTML | [markdown](https://python-markdown.github.io) |
 | HTML -> PDF | [WeasyPrint](https://weasyprint.org) |
+| Validacao | [Pydantic](https://docs.pydantic.dev) |
 | Configuracoes | [python-dotenv](https://saurabh-kumar.com/python-dotenv/) |
 
 ---
@@ -130,10 +161,13 @@ python3 -m venv .venv
 source .venv/bin/activate  # Linux/Mac
 # .venv\Scripts\activate   # Windows
 
-# 3. Instale as dependencias
-pip install -r requirements.txt
+# 3. Instale as dependencias do backend
+pip install -r backend/requirements.txt
 
-# 4. Configure o provedor de LLM (veja proxima secao)
+# 4. Instale as dependencias do frontend
+pip install -r frontend/requirements.txt
+
+# 5. Configure o provedor de LLM
 cp .env.example .env
 # Edite o arquivo .env com seus dados
 ```
@@ -142,17 +176,12 @@ cp .env.example .env
 
 ## Configuracao do LLM
 
-A aplicacao suporta **qualquer provedor com API OpenAI-compatible**.
-A configuracao e feita exclusivamente via variaveis de ambiente ou arquivo
-`.env`.
+O backend suporta **qualquer provedor com API OpenAI-compatible**.
+A configuracao e feita via variaveis de ambiente ou arquivo `.env`
+(na raiz do projeto, onde o backend encontra ao subir).
 
 ### 1. LiteLLM Proxy + Ollama (local)
 
-Recomendado para uso offline/privado. O [LiteLLM](https://docs.litellm.ai)
-funciona como um proxy universal que expoe modelos locais (Ollama) via API
-OpenAI.
-
-**Instale e inicie o LiteLLM:**
 ```bash
 pip install litellm
 litellm --model ollama/llama3.1:8b --port 4000
@@ -167,9 +196,6 @@ LLM_MODEL=ollama/llama3.1:8b
 
 ### 2. OpenRouter
 
-Acesso a dezenas de modelos (OpenAI, Anthropic, Google, Meta, etc.) com uma
-unica chave.
-
 **`.env`:**
 ```env
 LLM_BASE_URL=https://openrouter.ai/api/v1
@@ -178,8 +204,6 @@ LLM_MODEL=openai/gpt-4o-mini
 ```
 
 ### 3. Groq
-
-Rapido e barato, com modelos Llama e Mixtral otimizados.
 
 **`.env`:**
 ```env
@@ -190,6 +214,7 @@ LLM_MODEL=llama-3.1-8b-instant
 
 ### 4. OpenAI Oficial
 
+**`.env`:**
 ```env
 LLM_BASE_URL=
 LLM_API_KEY=sk-proj-sua-chave-aqui
@@ -203,16 +228,27 @@ LLM_MODEL=gpt-4o-mini
 
 ## Como usar
 
-```bash
-# Certifique-se de que o ambiente virtual esta ativado
-source .venv/bin/activate
+### Terminal 1 — Inicie o Backend
 
-# Inicie a aplicacao
-streamlit run app.py
+```bash
+# Certifique-se de que o .env esta na raiz do projeto
+cd backend
+PYTHONPATH=$(pwd) uvicorn app.main:app --reload --port 8000
 ```
 
-A interface abrira automaticamente no navegador (geralmente em
-`http://localhost:8501`).
+O backend estara disponivel em:
+- API: `http://localhost:8000`
+- Documentacao interativa: `http://localhost:8000/docs` (Swagger UI)
+- Health check: `http://localhost:8000/health`
+
+### Terminal 2 — Inicie o Frontend
+
+```bash
+cd frontend
+streamlit run app.py --server.port 8501
+```
+
+O frontend abrira em `http://localhost:8501`.
 
 ### Passo a passo na interface
 
@@ -227,39 +263,113 @@ A interface abrira automaticamente no navegador (geralmente em
 
 ---
 
+## API REST
+
+### Endpoints
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| `GET` | `/` | Info da API |
+| `GET` | `/health` | Health check + modelo configurado |
+| `POST` | `/api/v1/contracts/compare` | Compara 2 contratos e gera relatorio |
+
+### POST /api/v1/contracts/compare
+
+**Request:** `multipart/form-data`
+
+| Campo | Tipo | Descricao |
+|-------|------|-----------|
+| `file_a` | file | Contrato original (PDF ou DOCX) |
+| `file_b` | file | Contrato revisado (PDF ou DOCX) |
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "differences_count": 3,
+  "differences": [
+    {
+      "type": "modified",
+      "text_a": "Prazo: 12 meses",
+      "text_b": "Prazo: 24 meses"
+    }
+  ],
+  "report_markdown": "## 1. Resumo Executivo\n\n...",
+  "report_pdf_base64": "JVBERi0xLjQKJdPr6eEKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZw=="
+}
+```
+
+### GET /health
+
+```json
+{
+  "status": "ok",
+  "model": "ollama/llama3.1:8b"
+}
+```
+
+### Teste com curl
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Comparar contratos
+curl -X POST http://localhost:8000/api/v1/contracts/compare \
+  -F "file_a=@contrato_original.pdf" \
+  -F "file_b=@contrato_revisado.pdf"
+```
+
+---
+
 ## Estrutura de arquivos
 
 ```
 .
-├── app.py                  # Interface web (Streamlit)
-├── graph.py                # Orquestracao do pipeline (LangGraph)
-├── config.py               # Central de configuracoes (.env)
-├── extractors.py           # Extracao de texto de PDF/DOCX
-├── comparator.py           # Comparacao deterministica (difflib)
-├── report_template.py      # Prompts do LLM (system + template)
-├── pdf_exporter.py         # Conversao Markdown -> PDF (WeasyPrint)
-├── requirements.txt        # Dependencias Python
-├── .env.example            # Exemplo de configuracao
-├── .gitignore              # (recomendado) ignore .env, __pycache__/
-└── README.md               # Este arquivo
+├── backend/
+│   ├── app/
+│   │   ├── main.py                    # Entrypoint FastAPI
+│   │   ├── core/
+│   │   │   └── config.py              # Central de configuracoes
+│   │   ├── services/
+│   │   │   ├── extractors.py          # Extracao PDF/DOCX
+│   │   │   ├── comparator.py          # Comparacao difflib
+│   │   │   ├── report_template.py     # Prompts do LLM
+│   │   │   └── pdf_exporter.py        # Markdown -> PDF
+│   │   ├── graph/
+│   │   │   └── contract_graph.py      # Pipeline LangGraph
+│   │   ├── schemas/
+│   │   │   └── contracts.py           # Pydantic models
+│   │   └── api/v1/endpoints/
+│   │       └── contracts.py           # Endpoint POST /compare
+│   └── requirements.txt               # Deps do backend
+├── frontend/
+│   ├── app.py                         # Interface Streamlit
+│   ├── api_client.py                  # Cliente HTTP para backend
+│   └── requirements.txt               # Deps do frontend
+├── .env.example                       # Exemplo de configuracao
+├── .gitignore
+└── README.md                          # Este arquivo
 ```
 
-| Arquivo | Responsabilidade |
-|---------|-----------------|
-| `app.py` | UI — upload, exibicao de resultados, download de PDF |
-| `graph.py` | Orquestra as 3 etapas do pipeline via LangGraph |
-| `config.py` | Centraliza todas as configs (LLM, PDF, validacoes) |
-| `extractors.py` | Le PDF/DOCX e corrige artefatos de extracao |
-| `comparator.py` | Detecta adicoes, remocoes e modificacoes |
-| `report_template.py` | Define a "receita" do prompt juridico para o LLM |
-| `pdf_exporter.py` | Renderiza Markdown em PDF profissional |
+| Pasta/Arquivo | Responsabilidade |
+|---------------|-----------------|
+| `backend/app/main.py` | Entrypoint FastAPI — rotas, CORS, health |
+| `backend/app/core/config.py` | Configs centralizadas (.env) |
+| `backend/app/services/` | Logica de negocio (extracao, comparacao, PDF) |
+| `backend/app/graph/` | Pipeline LangGraph (orquestracao) |
+| `backend/app/schemas/` | Pydantic models (request/response) |
+| `backend/app/api/` | Routers da API REST |
+| `frontend/app.py` | UI Streamlit — upload e exibicao |
+| `frontend/api_client.py` | Cliente HTTP para chamar o backend |
 
 ---
 
 ## Variaveis de ambiente
 
-Todas as configuracoes sao centralizadas em `config.py` e podem ser
-sobrescritas via arquivo `.env` ou variaveis de ambiente do sistema.
+Todas as configuracoes sao centralizadas em `backend/app/core/config.py` e
+podem ser sobrescritas via arquivo `.env` na raiz do projeto.
 
 ### LLM
 
@@ -331,4 +441,4 @@ Distribuido sob a licenca MIT. Veja [LICENSE](LICENSE) para mais detalhes.
 
 ---
 
-> Desenvolvido com Python, Streamlit, LangGraph e WeasyPrint.
+> Desenvolvido com Python, FastAPI, Streamlit, LangGraph e WeasyPrint.

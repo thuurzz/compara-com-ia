@@ -1,6 +1,6 @@
 """
-config.py — Centralizacao de Configuracoes da Aplicacao
-=======================================================
+config.py — Centralizacao de Configuracoes do Backend
+======================================================
 
 Este modulo isola TODAS as variaveis de configuracao da aplicacao,
 sejam elas vindas de variaveis de ambiente (os.environ) ou de um
@@ -8,17 +8,12 @@ arquivo .env (via python-dotenv).
 
 Principios aplicados:
 - Single source of truth: uma unica porta de entrada para configs
-- Fail fast: validacoes sao feitas no carregamento, nao no meio da execucao
-- Valores padrao explicitos: sempre que fizer sentido, definimos fallback
+- Fail fast: validacoes sao feitas no carregamento
+- Valores padrao explicitos
 - Leitura facil: qualquer arquivo que precise de config importa deste modulo
 
 Exemplo de uso:
-    from config import LLM_MODEL, PDF_MARGIN_LEFT
-
-Exemplo de arquivo .env:
-    LLM_BASE_URL=http://localhost:4000
-    LLM_API_KEY=sk-xxx
-    LLM_MODEL=ollama/llama3.1:8b
+    from app.core.config import LLM_MODEL, PDF_MARGIN_LEFT
 """
 
 import os
@@ -107,5 +102,4 @@ def _validate() -> None:
             )
 
 
-# Executa validacao automaticamente ao importar o modulo.
 _validate()
