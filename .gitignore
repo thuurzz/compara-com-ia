@@ -1,0 +1,53 @@
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Variáveis de ambiente e credenciais
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# IDEs e editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Arquivos gerados pela aplicação
+*.pdf
+!relatorio_comparativo.pdf
+/tmp/
+temp/
+
+# Streamlit
+.streamlit/
+
+# Logs
+*.log
